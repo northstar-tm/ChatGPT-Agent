@@ -54,7 +54,7 @@ Files created by the agent are placed in `workspace/`. After ChatGPT reports `.d
 | `.ask` | Ask you a question in the terminal. |
 | `.done` | Finish the current task and offer to start another. |
 
-The `.context` directive is an internal response check and is not an operation.
+The `.context` directive is an internal response check and is not an operation. It is used in order for ChatGPT to keep answering properly
 
 ## Safety and privacy
 
@@ -77,4 +77,4 @@ workspace/        Local working folder for generated files
 
 ## License
 
-No license is included yet. Add a license before redistributing the project if you want to grant reuse rights.
+MIT
