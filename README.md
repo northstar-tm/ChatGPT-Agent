@@ -20,7 +20,7 @@ GPT Agent connects to ChatGPT in Chrome with Selenium, reads its structured acti
 - Windows 10 or 11
 - Python 3.10 or later
 - Google Chrome
-- A ChatGPT account and internet access
+- (A ChatGPT account) and internet access
 
 Selenium Manager normally obtains the matching ChromeDriver automatically. The first run may take longer while it initializes the browser.
 
