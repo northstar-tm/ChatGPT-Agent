@@ -4,7 +4,7 @@
 
 GPT Agent connects to ChatGPT in Chrome with Selenium, reads its structured action directives, and applies them inside a dedicated `workspace` folder. A Rich-powered terminal interface shows the conversation, action results, and a live file-change summary.
 
-> This project automates the ChatGPT website. It is not an OpenAI API client and is not affiliated with GitHub Copilot.
+> This project automates the ChatGPT website. It is not an OpenAI API client and is not affiliated with anything. This is a simple POC.
 
 ## What it does
 
