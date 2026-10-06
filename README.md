@@ -4,7 +4,7 @@
 
 GPT Agent connects to ChatGPT in Chrome with Selenium, reads its structured action directives, and applies them inside a dedicated `workspace` folder. A Rich-powered terminal interface shows the conversation, action results, and a live file-change summary.
 
-> This project automates the ChatGPT website. It is not an OpenAI API client and is not affiliated with anything. This is a simple POC.
+> This project automates the ChatGPT website. It is not an OpenAI API client and is not affiliated with GitHub Copilot.
 
 ## What it does
 
@@ -20,7 +20,7 @@ GPT Agent connects to ChatGPT in Chrome with Selenium, reads its structured acti
 - Windows 10 or 11
 - Python 3.10 or later
 - Google Chrome
-- (A ChatGPT account) and internet access
+- A ChatGPT account and internet access
 
 Selenium Manager normally obtains the matching ChromeDriver automatically. The first run may take longer while it initializes the browser.
 
@@ -35,7 +35,29 @@ python -m pip install -r requirements.txt
 python agent.py
 ```
 
-Enter a task in the terminal. Sign in to ChatGPT in the Chrome window if needed, then return to the terminal and press Enter. The agent displays the conversation and asks before running commands or performing destructive actions.
+By default, Chrome opens in an off-screen window. Sign in once with:
+
+```powershell
+python agent.py --account
+```
+
+This opens a visible Chrome window for sign-in, then continues with Chrome off-screen. You can also run the agent with Chrome visible and sign in manually:
+
+```powershell
+python agent.py --visible
+```
+
+Enter a task in the terminal (or provide it as command-line arguments, for example `python agent.py "Create a Python file"`). The agent displays the conversation and asks before running commands or performing destructive actions. When a task is done, enter another task to continue in the same session, or `/quit` to exit.
+
+## Chrome options
+
+| Option | Behavior |
+| --- | --- |
+| `--account` | Open visible Chrome for sign-in, then continue off-screen. |
+| `--visible` | Keep Chrome visible while the agent runs. |
+| `--headless` | Run Chrome in headless mode instead of an off-screen window. |
+
+`--account` handles sign-in before the selected run mode starts. If both `--visible` and `--headless` are supplied, `--visible` takes precedence.
 
 Files created by the agent are placed in `workspace/`. After ChatGPT reports `.done`, you can enter another task in the same session. Enter `/quit` to close the app.
 
@@ -54,7 +76,7 @@ Files created by the agent are placed in `workspace/`. After ChatGPT reports `.d
 | `.ask` | Ask you a question in the terminal. |
 | `.done` | Finish the current task and offer to start another. |
 
-The `.context` directive is an internal response check and is not an operation. It is used in order for ChatGPT to keep answering properly
+The `.context` directive is an internal response check and is not an operation.
 
 ## Safety and privacy
 
@@ -77,4 +99,4 @@ workspace/        Local working folder for generated files
 
 ## License
 
-MIT
+No license is included yet. Add a license before redistributing the project if you want to grant reuse rights.
