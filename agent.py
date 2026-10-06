@@ -1,22 +1,9 @@
-"""Local agent driven by ChatGPT (web interface) through Selenium.
-
-ChatGPT answers with directives in this format:
-
-    .newfile = path/file.py
-    ```
-    content
-    ```
-
-The script reads the answer, runs the directives inside WORKSPACE, then sends
-a report back to ChatGPT to continue the loop.
-"""
-
+import argparse
 import json
 import re
 import secrets
 import shutil
 import subprocess
-import sys
 import time
 from collections import Counter
 from datetime import datetime
@@ -140,11 +127,46 @@ return out;
 """
 
 
-def make_driver() -> webdriver.Chrome:
+def make_driver(mode: str = "visible") -> webdriver.Chrome:
+    """mode: visible | offscreen (real window moved out of view) | headless."""
     opts = webdriver.ChromeOptions()
     opts.add_argument(f"--user-data-dir={PROFILE_DIR}")
-    opts.add_argument("--start-maximized")
+    if mode == "headless":
+        opts.add_argument("--headless=new")
+        opts.add_argument("--window-size=1920,1080")
+    elif mode == "offscreen":
+        opts.add_argument("--window-position=-32000,-32000")
+        opts.add_argument("--window-size=1280,900")
+        # keep the page rendering although no part of the window is on screen
+        opts.add_argument("--disable-features=CalculateNativeWinOcclusion")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
+        opts.add_argument("--disable-renderer-backgrounding")
+    else:
+        opts.add_argument("--start-maximized")
     return webdriver.Chrome(options=opts)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="ChatGPT-driven local agent")
+    parser.add_argument("task", nargs="*", help="task for the agent")
+    parser.add_argument("--account", action="store_true",
+                        help="open a visible Chrome to sign in, then continue in the background")
+    parser.add_argument("--visible", action="store_true", help="keep Chrome on screen")
+    parser.add_argument("--headless", action="store_true", help="use true headless mode instead of an off-screen window")
+    return parser.parse_args()
+
+
+def sign_in(ui: "ChatUI") -> None:
+    """Visible Chrome session used only to log in; the profile keeps the session."""
+    driver = make_driver("visible")
+    try:
+        driver.get(CHATGPT_URL)
+        ui.notice("Sign in to ChatGPT in the Chrome window.")
+        ui.console.input("[dim]Press Enter here once you are signed in...[/]")
+    finally:
+        driver.quit()
+    time.sleep(2)  # lets Chrome release the profile lock
+    ui.notice("Signed in. Moving Chrome to the background.")
 
 
 ASSISTANT_SEL = '[data-message-author-role="assistant"]'
@@ -205,9 +227,14 @@ class ChatUI:
 
     def action(self, name: str, arg: str, status: str, detail: str) -> None:
         style = "green" if status == "ok" else "yellow" if status == "refused" else "red"
-        self.console.print(f"[{style}]{status.upper()}[/] [bold]{name}[/] {arg}")
-        if detail:
-            self.console.print(Text(detail[:500], style="dim", overflow="fold"))
+        body = Text(detail[:1500] if detail else "(no output)", overflow="fold")
+        self.console.print(Panel(
+            body,
+            title=f"[bold]{name}[/] {arg}".rstrip(),
+            subtitle=f"[{style}]{status.upper()}[/]",
+            border_style=style,
+            box=box.ROUNDED,
+        ))
 
     def track_file(self, path: Path, before: str | None, after: str | None) -> None:
         key = path.relative_to(WORKSPACE.resolve()).as_posix()
@@ -267,6 +294,19 @@ class ChatUI:
 
 def assistant_count(driver) -> int:
     return driver.execute_script(JS_BLOCKS + "return getB().length;")
+
+
+def scroll_to_bottom(driver) -> None:
+    """Keeps the newest messages rendered; ChatGPT may not render off-screen ones."""
+    driver.execute_script(
+        JS_BLOCKS + """
+        const b = getB();
+        if (b.length) b[b.length - 1].scrollIntoView({block: 'end'});
+        document.querySelectorAll('main, [class*="overflow-y-auto"], [class*="overflow-auto"]')
+          .forEach(e => { e.scrollTop = e.scrollHeight; });
+        window.scrollTo(0, document.body.scrollHeight);
+        """
+    )
 
 
 def user_count(driver) -> int:
@@ -344,6 +384,7 @@ def last_text(driver, since: int) -> str:
 def wait_for_response(driver, previous_count: int) -> str:
     deadline = time.time() + RESPONSE_TIMEOUT
     while assistant_count(driver) <= previous_count:
+        scroll_to_bottom(driver)
         if time.time() > deadline:
             raise TimeoutException("No response from ChatGPT")
         time.sleep(0.5)
@@ -352,6 +393,7 @@ def wait_for_response(driver, previous_count: int) -> str:
     text, last_change = last_text(driver, previous_count), time.time()
     while time.time() < deadline:
         time.sleep(0.5)
+        scroll_to_bottom(driver)
         current = last_text(driver, previous_count)
         if current != text:
             text, last_change = current, time.time()
@@ -363,6 +405,7 @@ def wait_for_response(driver, previous_count: int) -> str:
 
 
 def parse_response(driver, since: int) -> list[tuple[str, str, str]]:
+    scroll_to_bottom(driver)
     blocks = driver.execute_script(JS_PARSE, since) or []
     actions = []
     for header, content in blocks:
@@ -569,16 +612,25 @@ def main() -> None:
     WORKSPACE.mkdir(exist_ok=True)
     ui = ChatUI()
     ui.start()
-    task = " ".join(sys.argv[1:]) or ui.prompt("What should we work on?")
+    args = parse_args()
+    if args.account:
+        sign_in(ui)
+    mode = "visible" if args.visible else "headless" if args.headless else "offscreen"
+    background = mode != "visible"
+    task = " ".join(args.task) or ui.prompt("What should we work on?")
     tasks = [task]
     canary = secrets.token_hex(8)
     ui.user(task)
 
-    driver = make_driver()
+    driver = make_driver(mode)
     try:
         driver.get(CHATGPT_URL)
-        ui.notice("Log in to ChatGPT in Chrome if needed, then press Enter here.")
-        ui.console.input("[dim]Press Enter to continue...[/]")
+        if background:
+            if driver.find_elements(By.CSS_SELECTOR, '[data-testid="login-button"]'):
+                ui.notice("Not signed in. Run `python agent.py --account` to sign in first.")
+        elif not args.account:
+            ui.notice("Log in to ChatGPT in Chrome if needed, then press Enter here.")
+            ui.console.input("[dim]Press Enter to continue...[/]")
 
         count = assistant_count(driver)
         ui.notice("Connecting to ChatGPT...")
@@ -680,7 +732,8 @@ def main() -> None:
     finally:
         show_audit(tasks[0], ui, tasks)
         try:
-            ui.console.input("[dim]Press Enter to close Chrome...[/]")
+            if not background:
+                ui.console.input("[dim]Press Enter to close Chrome...[/]")
         finally:
             driver.quit()
 
