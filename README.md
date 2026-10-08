@@ -14,6 +14,7 @@ GPT Agent connects to ChatGPT in Chrome with Selenium, reads its structured acti
 - Shows changed text files and added or removed lines during the session.
 - Checks each response for a per-session context marker and resends the protocol if it is missing.
 - Writes a JSON audit report after the session.
+- Offers an optional CustomTkinter desktop GUI alongside the terminal interface.
 
 ## Requirements
 
@@ -23,6 +24,12 @@ GPT Agent connects to ChatGPT in Chrome with Selenium, reads its structured acti
 - A ChatGPT account and internet access
 
 Selenium Manager normally obtains the matching ChromeDriver automatically. The first run may take longer while it initializes the browser.
+
+The optional GUI (`--gui`) additionally requires the `customtkinter` package, which is not installed by `requirements.txt`:
+
+```powershell
+python -m pip install customtkinter
+```
 
 ## Quick start
 
@@ -56,10 +63,15 @@ Enter a task in the terminal (or provide it as command-line arguments, for examp
 | `--account` | Open visible Chrome for sign-in, then continue off-screen. |
 | `--visible` | Keep Chrome visible while the agent runs. |
 | `--headless` | Run Chrome in headless mode instead of an off-screen window. |
+| `--gui` | Launch the CustomTkinter desktop interface instead of the terminal UI. |
 
 `--account` handles sign-in before the selected run mode starts. If both `--visible` and `--headless` are supplied, `--visible` takes precedence.
 
 Files created by the agent are placed in `workspace/`. After ChatGPT reports `.done`, you can enter another task in the same session. Enter `/quit` to close the app.
+
+## Graphical interface
+
+Run `python agent.py --gui` to open the desktop GUI instead of the terminal interface. It shows the same conversation, action results, and file-change summary as the terminal UI, driven by the same agent logic in [agent.py](C:/Users/bowser/Documents/gptagent/agent.py). The GUI is implemented in [gui.py](C:/Users/bowser/Documents/gptagent/gui.py) and requires the `customtkinter` package (see Requirements).
 
 ## Actions
 
@@ -93,6 +105,7 @@ The GitHub ZIP intentionally excludes the Chrome profile, virtual environment, a
 
 ```text
 agent.py          Selenium agent and terminal interface
+gui.py            Optional CustomTkinter desktop interface (launched with --gui)
 requirements.txt  Python dependencies
 workspace/        Local working folder for generated files
 ```
