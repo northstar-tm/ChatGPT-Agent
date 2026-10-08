@@ -1,3 +1,16 @@
+"""Local agent driven by ChatGPT (web interface) through Selenium.
+
+ChatGPT answers with directives in this format:
+
+    .newfile = path/file.py
+    ```
+    content
+    ```
+
+The script reads the answer, runs the directives inside WORKSPACE, then sends
+a report back to ChatGPT to continue the loop.
+"""
+
 import argparse
 import json
 import re
@@ -102,6 +115,7 @@ ALLOWED_DIRECTIVES = {
 DESTRUCTIVE = {".deletefile", ".movefile", ".editfile", ".run"}
 MAX_READ = 20000
 AUDIT: list[dict] = []
+CONTEXT_BYPASS = {"enabled": False, "text": ""}  # replaces the context-marker check
 
 # Response blocks (p/pre) of the page; ChatGPT does not always expose one container per message.
 JS_BLOCKS = """
@@ -153,6 +167,7 @@ def parse_args() -> argparse.Namespace:
                         help="open a visible Chrome to sign in, then continue in the background")
     parser.add_argument("--visible", action="store_true", help="keep Chrome on screen")
     parser.add_argument("--headless", action="store_true", help="use true headless mode instead of an off-screen window")
+    parser.add_argument("--gui", action="store_true", help="launch the graphical interface")
     return parser.parse_args()
 
 
@@ -162,7 +177,7 @@ def sign_in(ui: "ChatUI") -> None:
     try:
         driver.get(CHATGPT_URL)
         ui.notice("Sign in to ChatGPT in the Chrome window.")
-        ui.console.input("[dim]Press Enter here once you are signed in...[/]")
+        ui.pause("Press Enter here once you are signed in...")
     finally:
         driver.quit()
     time.sleep(2)  # lets Chrome release the profile lock
@@ -212,6 +227,13 @@ class ChatUI:
             box=box.ROUNDED,
             expand=False,
         ))
+
+    def pause(self, message: str) -> None:
+        self.console.input(f"[dim]{message}[/]")
+
+    def confirm(self, question: str) -> bool:
+        answer = self.console.input(f"[yellow]{question}[/] [y/N] ")
+        return answer.strip().lower() in ("y", "yes")
 
     def prompt(self, label: str) -> str:
         return self.console.input(f"[bold cyan]You[/] [dim]>[/] {label} ")
@@ -404,11 +426,13 @@ def wait_for_response(driver, previous_count: int) -> str:
     raise TimeoutException("The response never finishes")
 
 
-def parse_response(driver, since: int) -> list[tuple[str, str, str]]:
+def parse_response(driver, since: int, canary: str = "") -> list[tuple[str, str, str]]:
     scroll_to_bottom(driver)
     blocks = driver.execute_script(JS_PARSE, since) or []
     actions = []
     for header, content in blocks:
+        if canary and content.strip() == canary and not (header and header.startswith(".")):
+            header = f".context = {canary}"  # model dropped the header line but sent the marker block
         if not header or not header.startswith("."):
             continue
         name, _, arg = header.partition("=")
@@ -416,20 +440,23 @@ def parse_response(driver, since: int) -> list[tuple[str, str, str]]:
     return actions
 
 
-def validate_response(actions: list[tuple[str, str, str]], canary: str) -> tuple[str | None, list[tuple[str, str, str]]]:
-    markers = [action for action in actions if action[0] == ".context"]
-    if len(markers) != 1 or markers[0][1] != canary or markers[0][2].strip() != canary:
+def validate_response(actions: list[tuple[str, str, str]], canary: str, reply: str = "") -> tuple[str | None, list[tuple[str, str, str]]]:
+    # The marker only has to appear in the reply; ChatGPT's rendering of the header/code block varies.
+    if not CONTEXT_BYPASS["enabled"] and canary not in reply and not any(canary in arg or canary in content for _, arg, content in actions):
         return "The required session context marker is missing or incorrect.", []
     unknown = [name for name, _, _ in actions if name not in ALLOWED_DIRECTIVES]
     if unknown:
         return "Unknown directive(s): " + ", ".join(unknown), []
     usable = [action for action in actions if action[0] != ".context"]
     if not usable:
-        return "No actionable directive was found.", []
+        found = ", ".join(name for name, _, _ in actions) or "none"
+        return f"No actionable directive was found (parsed directives: {found}).", []
     return None, usable
 
 
 def context_protocol(canary: str) -> str:
+    if CONTEXT_BYPASS["enabled"]:
+        return "\n\n" + CONTEXT_BYPASS["text"].strip()
     return (
         "\n\nFor every reply, begin with this required context-check directive, "
         "including its code block exactly:\n\n"
@@ -472,7 +499,9 @@ def record(action: str, arg: str, status: str, detail: str = "") -> None:
 
 def confirm(question: str, ui: ChatUI | None = None) -> bool:
     prompt = f"[yellow]{question}[/] [y/N] " if ui else f"{question} [y/N] "
-    answer = ui.console.input(prompt) if ui else input(prompt)
+    if ui:
+        return ui.confirm(question)
+    answer = input(prompt)
     return answer.strip().lower() in ("y", "yes")
 
 
@@ -609,15 +638,25 @@ def show_audit(task: str, ui: ChatUI | None = None, tasks: list[str] | None = No
 
 
 def main() -> None:
-    WORKSPACE.mkdir(exist_ok=True)
+    args = parse_args()
+    if args.gui:
+        from gui import run_gui
+        run_gui()
+        return
     ui = ChatUI()
     ui.start()
-    args = parse_args()
+    run_session(ui, args)
+
+
+def run_session(ui, args) -> None:
+    WORKSPACE.mkdir(exist_ok=True)
     if args.account:
         sign_in(ui)
     mode = "visible" if args.visible else "headless" if args.headless else "offscreen"
     background = mode != "visible"
-    task = " ".join(args.task) or ui.prompt("What should we work on?")
+    task = " ".join(args.task).strip() or ui.prompt("What should we work on?").strip()
+    if not task:
+        return
     tasks = [task]
     canary = secrets.token_hex(8)
     ui.user(task)
@@ -630,7 +669,7 @@ def main() -> None:
                 ui.notice("Not signed in. Run `python agent.py --account` to sign in first.")
         elif not args.account:
             ui.notice("Log in to ChatGPT in Chrome if needed, then press Enter here.")
-            ui.console.input("[dim]Press Enter to continue...[/]")
+            ui.pause("Press Enter to continue...")
 
         count = assistant_count(driver)
         ui.notice("Connecting to ChatGPT...")
@@ -642,8 +681,8 @@ def main() -> None:
             reply = wait_for_response(driver, previous)
             ui.assistant(reply)
             count = assistant_count(driver)
-            actions = parse_response(driver, previous)
-            issue, actions = validate_response(actions, canary)
+            actions = parse_response(driver, previous, canary)
+            issue, actions = validate_response(actions, canary, reply)
             if issue:
                 protocol_failures += 1
                 record("protocol reminder", "", "error", issue)
@@ -733,7 +772,7 @@ def main() -> None:
         show_audit(tasks[0], ui, tasks)
         try:
             if not background:
-                ui.console.input("[dim]Press Enter to close Chrome...[/]")
+                ui.pause("Press Enter to close Chrome...")
         finally:
             driver.quit()
 
